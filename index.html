@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Studio V3 - Smart Resize</title>
+    <meta name="description" content="Simple client-side Frame Studio: upload a PNG frame, add photos, smart-resize canvas, apply filters, and download single or zipped exports.">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #6c5ce7; /* New Purple Theme */
+            --accent: #a29bfe;
+            --bg: #dfe6e9;
+            --panel: #ffffff;
+            --text: #2d3436;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial;
+            margin: 0;
+            background-color: var(--bg);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            color: var(--text);
+        }
+
+        header {
+            background: var(--primary);
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        h1 { margin: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 10px; }
+
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Sidebar Styling */
+        .sidebar {
+            width: 260px;
+            background: var(--panel);
+            border-right: 1px solid #b2bec3;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+        }
+
+        .section-header {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: #636e72;
+            margin: 25px 0 10px 0;
+            font-weight: 800;
+            letter-spacing: 1px;
+        }
+        .section-header:first-child { margin-top: 0; }
+
+        .btn-upload {
+            background-color: #f1f2f6;
+            border: 2px dashed #b2bec3;
+            color: #636e72;
+            padding: 20px;
+            border-radius: 12px;
+            font-weight: 600;
+            text-align: center;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-upload:hover {
+            background: #eef;
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+        .btn-upload input[type=file] {
+            position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+            opacity: 0; cursor: pointer;
+        }
+
+        .thumbnail-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .thumb {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            cursor: pointer;
+            border-radius: 8px;
+            border: 3px solid transparent;
+            transition: 0.2s;
+            background: #eee;
+        }
+        .thumb.active {
+            border-color: var(--primary);
+            transform: scale(0.95);
+        }
+
+        /* Main Editor Area */
+        .main-editor {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background-color: #b2bec3;
+            /* Checkered Pattern */
+            background-image:
+                linear-gradient(45deg, #ccc 25%, transparent 25%),
+                linear-gradient(-45deg, #ccc 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #ccc 75%),
+                linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
+        .canvas-wrapper {
+            max-width: 90%;
+            max-height: 70vh;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            border: 4px solid white;
+            overflow: hidden; /* Ensures scaling looks clean */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+            background: transparent;
+        }
+
+        /* Controls Panel */
+        .controls-container {
+            position: absolute;
+            bottom: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 15px 20px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: calc(100% - 40px);
+            max-width: 980px;
+        }
+
+        .sliders-row {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            width: 140px;
+        }
+
+        .control-group label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            color: #636e72;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            background: #f1f2f6;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #636e72;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .filter-btn:hover { background: #dfe6e9; }
+        .filter-btn.active { background: var(--primary); color: white; }
+
+        /* Floating Action Buttons */
+        .fab-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-primary { background: var(--primary); }
+        .btn-success { background: #00b894; }
+
+        .hidden { display: none !important; }
+
+        /* Loading */
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9); z-index: 100;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+        }
+        .spinner {
+            width: 50px; height: 50px;
+            border: 5px solid #dfe6e9; border-top: 5px solid var(--primary);
+            border-radius: 50%; animation: spin 1s infinite linear;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        @media (max-width: 860px) {
+            .sidebar { display: none; }
+            .controls-container { bottom: 10px; padding: 12px; }
+            .canvas-wrapper { max-height: 60vh; }
+        }
+
+    </style>
+</head>
+<body>
+
+<div id="loadingOverlay" class="hidden">
+    <div class="spinner"></div>
+    <h3 id="loadingText" style="margin-top: 20px; color: #555;">Processing...</h3>
+</div>
+
+<header>
+    <h1>✨ Frame Studio V3</h1>
+</header>
+
+<div class="container">
+    <div class="sidebar">
+        <div class="section-header">1. Upload Frame</div>
+        <div class="btn-upload">
+            <span>🖼️ Upload PNG Frame</span>
+            <input type="file" id="frameInput" accept="image/png" />
+        </div>
+        <div style="font-size: 0.75rem; color: #888; margin-top: 8px; line-height: 1.4;">
+            <strong>Smart Resize:</strong> Canvas will adapt to the size of the uploaded frame (Portrait/Landscape).
+        </div>
+
+        <hr style="border:0; border-top:1px solid #dfe6e9; margin: 20px 0;">
+
+        <div class="section-header">2. Add Photos</div>
+        <div class="btn-upload">
+            <span>📂 Select Images</span>
+            <input type="file" id="uploadInput" accept="image/*" multiple />
+        </div>
+        
+        <div class="thumbnail-list" id="thumbnailList"></div>
+    </div>
+
+    <div class="main-editor">
+        <div class="canvas-wrapper">
+            <canvas id="editorCanvas" width="800" height="800"></canvas>
+        </div>
+
+        <div class="fab-container hidden" id="actionBar">
+            <button class="btn btn-primary" onclick="downloadCurrent()">⬇ Save Image</button>
+            <button class="btn btn-success" onclick="downloadAll()">📦 Download All (ZIP)</button>
+        </div>
+
+        <div class="controls-container hidden" id="controlsPanel">
+            <div class="sliders-row">
+                <div class="control-group">
+                    <label>Zoom</label>
+                    <input type="range" id="zoomRange" min="0.1" max="4" step="0.05" value="1">
+                </div>
+                <div class="control-group">
+                    <label>Move Horizontal</label>
+                    <input type="range" id="xRange" min="-600" max="600" value="0">
+                </div>
+                <div class="control-group">
+                    <label>Move Vertical</label>
+                    <input type="range" id="yRange" min="-600" max="600" value="0">
+                </div>
+            </div>
+
+            <div class="filter-row">
+                <button class="filter-btn active" onclick="setFilter('none')">Normal</button>
+                <button class="filter-btn" onclick="setFilter('grayscale(100%)')">B&W</button>
+                <button class="filter-btn" onclick="setFilter('sepia(100%)')">Sepia</button>
+                <button class="filter-btn" onclick="setFilter('contrast(150%)')">Contrast</button>
+                <button class="filter-btn" onclick="setFilter('brightness(120%)')">Bright</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Configuration ---
+    const MAX_PHOTOS = 20;
+
+    // --- State ---
+    let imagesData = []; 
+    let activeImageIndex = null;
+    let customFrameImg = null;
+    
+    // Default Canvas Size (Square)
+    let canvasWidth = 800;
+    let canvasHeight = 800;
+
+    // --- DOM Elements ---
+    const canvas = document.getElementById('editorCanvas');
+    const ctx = canvas.getContext('2d');
+    const uploadInput = document.getElementById('uploadInput');
+    const frameInput = document.getElementById('frameInput');
+    const controlsPanel = document.getElementById('controlsPanel');
+    const actionBar = document.getElementById('actionBar');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    const thumbnailList = document.getElementById('thumbnailList');
+
+    // Inputs
+    const zoomRange = document.getElementById('zoomRange');
+    const xRange = document.getElementById('xRange');
+    const yRange = document.getElementById('yRange');
+    const filterBtns = document.querySelectorAll('.filter-btn');
+
+    // Device Pixel Ratio support for crisp exports on high-DPI screens
+    function setCanvasSize(w, h) {
+        const dpr = window.devicePixelRatio || 1;
+        canvasWidth = w;
+        canvasHeight = h;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale drawing operations
+    }
+
+    // initialize with default
+    setCanvasSize(canvasWidth, canvasHeight);
+
+    // --- 1. Frame Handling (Smart Resize) ---
+    frameInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const img = new Image();
+            img.onload = () => {
+                customFrameImg = img;
+                
+                // SMART RESIZE LOGIC
+                // We update the canvas dimensions to match the frame exactly
+                setCanvasSize(img.width, img.height);
+
+                // Redraw
+                drawCanvas();
+            };
+            img.src = evt.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // --- 2. Photo Handling ---
+    uploadInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length + imagesData.length > MAX_PHOTOS) {
+            alert(`Limit of ${MAX_PHOTOS} photos.`);
+            return;
+        }
+
+        files.forEach((file) => {
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    imagesData.push({
+                        id: Date.now() + Math.random(),
+                        imgElement: img,
+                        config: { scale: 1, x: 0, y: 0, filter: 'none' }
+                    });
+                    renderThumb(imagesData.length - 1);
+                    if (imagesData.length === 1) selectImage(0);
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+        uploadInput.value = '';
+    });
+
+    function renderThumb(index) {
+        const data = imagesData[index];
+        const thumb = document.createElement('img');
+        thumb.src = data.imgElement.src;
+        thumb.classList.add('thumb');
+        thumb.onclick = () => selectImage(index);
+        thumbnailList.appendChild(thumb);
+    }
+
+    // --- 3. Selection & Filtering ---
+    function selectImage(index) {
+        activeImageIndex = index;
+        
+        // Update Thumbnails
+        document.querySelectorAll('.thumb').forEach((t, i) => {
+            t.classList.toggle('active', i === index);
+        });
+
+        // Show UI
+        controlsPanel.classList.remove('hidden');
+        actionBar.classList.remove('hidden');
+
+        // Load Config
+        const config = imagesData[index].config;
+        zoomRange.value = config.scale;
+        xRange.value = config.x;
+        yRange.value = config.y;
+
+        // Update Filter Buttons UI
+        filterBtns.forEach(btn => {
+            if (btn.innerText.toLowerCase() === 'normal' && config.filter === 'none') {
+                btn.classList.add('active');
+            } else if (config.filter.includes(btn.innerText.toLowerCase()) || 
+                      (btn.innerText === 'B&W' && config.filter.includes('grayscale'))) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+
+        drawCanvas();
+    }
+
+    function setFilter(filterVal) {
+        if (activeImageIndex === null) return;
+        imagesData[activeImageIndex].config.filter = filterVal;
+        
+        // Update Button Styles
+        filterBtns.forEach(btn => btn.classList.remove('active'));
+        // `event` may be undefined when called programmatically; guard before using
+        if (window.event && window.event.target) window.event.target.classList.add('active');
+
+        drawCanvas();
+    }
+
+    // --- 4. Drawing Logic ---
+    function drawCanvas() {
+        // Clear background
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        
+        // Draw white base (prevents transparent PNGs from showing checkered background in export)
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        if (activeImageIndex !== null) {
+            const data = imagesData[activeImageIndex];
+            const img = data.imgElement;
+            const config = data.config;
+
+            ctx.save();
+            
+            // 1. Center of Canvas
+            ctx.translate(canvasWidth / 2, canvasHeight / 2);
+            
+            // 2. User Transform
+            ctx.translate(config.x, config.y);
+            ctx.scale(config.scale, config.scale);
+
+            // 3. Apply Filter
+            ctx.filter = config.filter;
+
+            // 4. Draw Image centered
+            ctx.drawImage(img, -img.width / 2, -img.height / 2);
+            
+            ctx.restore();
+        }
+
+        // 5. Draw Frame Overlay
+        if (customFrameImg) {
+            ctx.drawImage(customFrameImg, 0, 0, canvasWidth, canvasHeight);
+        } else {
+            drawDefaultFrame();
+        }
+    }
+
+    function drawDefaultFrame() {
+        // Simple fallback frame if no PNG uploaded
+        const border = canvasWidth * 0.05; // 5% border
+        const bottom = canvasHeight * 0.2; // 20% bottom
+        
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvasWidth, border); // Top
+        ctx.fillRect(0, 0, border, canvasHeight); // Left
+        ctx.fillRect(canvasWidth - border, 0, border, canvasHeight); // Right
+        ctx.fillRect(0, canvasHeight - bottom, canvasWidth, bottom); // Bottom
+    }
+
+    // --- 5. Event Listeners ---
+    function updateConfig() {
+        if (activeImageIndex === null) return;
+        imagesData[activeImageIndex].config.scale = parseFloat(zoomRange.value);
+        imagesData[activeImageIndex].config.x = parseInt(xRange.value);
+        imagesData[activeImageIndex].config.y = parseInt(yRange.value);
+        drawCanvas();
+    }
+
+    zoomRange.addEventListener('input', updateConfig);
+    xRange.addEventListener('input', updateConfig);
+    yRange.addEventListener('input', updateConfig);
+
+    // --- 6. Downloads ---
+    function downloadCurrent() {
+        if (activeImageIndex === null) return;
+        // Export at device-pixel ratio for good quality
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvasWidth * dpr;
+        const h = canvasHeight * dpr;
+
+        // Create a temporary canvas to export at full resolution
+        const tmp = document.createElement('canvas');
+        tmp.width = w;
+        tmp.height = h;
+        const tctx = tmp.getContext('2d');
+        tctx.scale(dpr, dpr);
+
+        // draw same content onto tmp canvas
+        tctx.fillStyle = '#ffffff';
+        tctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        if (activeImageIndex !== null) {
+            const data = imagesData[activeImageIndex];
+            const img = data.imgElement;
+            const config = data.config;
+
+            tctx.save();
+            tctx.translate(canvasWidth / 2, canvasHeight / 2);
+            tctx.translate(config.x, config.y);
+            tctx.scale(config.scale, config.scale);
+            tctx.filter = config.filter;
+            tctx.drawImage(img, -img.width / 2, -img.height / 2);
+            tctx.restore();
+        }
+
+        if (customFrameImg) {
+            tctx.drawImage(customFrameImg, 0, 0, canvasWidth, canvasHeight);
+        }
+
+        tmp.toBlob(blob => saveAs(blob, `frame_studio_export_${Date.now()}.jpg`), 'image/jpeg', 0.9);
+    }
+
+    async function downloadAll() {
+        if (imagesData.length === 0) return;
+        
+        loadingOverlay.classList.remove('hidden');
+        loadingText.innerText = "Initializing...";
+        
+        const zip = new JSZip();
+        const savedIndex = activeImageIndex;
+
+        try {
+            for (let i = 0; i < imagesData.length; i++) {
+                loadingText.innerText = `Processing ${i+1}/${imagesData.length}...`;
+                
+                activeImageIndex = i;
+                drawCanvas();
+
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+                zip.file(`photo_${i+1}.jpg`, blob);
+                
+                await new Promise(r => setTimeout(r, 20)); // UI Breath
+            }
+
+            loadingText.innerText = "Zipping...";
+            const content = await zip.generateAsync({type:"blob"});
+            saveAs(content, "photo_set.zip");
+
+        } catch(e) {
+            alert("Error: " + e.message);
+        } finally {
+            activeImageIndex = savedIndex;
+            drawCanvas();
+            loadingOverlay.classList.add('hidden');
+        }
+    }
+</script>
+</body>
+</html>
